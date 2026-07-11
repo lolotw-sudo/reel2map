@@ -1,0 +1,323 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="臉書美食地圖">
+<meta name="theme-color" content="#1F2A44">
+<title>臉書美食地圖 · reel2map</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css" />
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Shippori+Mincho:wght@500;700&family=Zen+Kaku+Gothic+New:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --ink:#1F2A44;
+    --paper:#F1ECDF;
+    --paper-2:#E8E1CE;
+    --vermillion:#C4451C;
+    --moss:#6B7A5E;
+    --line:#D8CFB8;
+  }
+  *{box-sizing:border-box; -webkit-tap-highlight-color:transparent;}
+  html,body{height:100%; margin:0; overscroll-behavior:none;}
+  body{
+    font-family:'Zen Kaku Gothic New', sans-serif;
+    background:var(--paper);
+    color:var(--ink);
+  }
+  #map{
+    position:absolute; inset:0;
+    filter:saturate(0.55) contrast(0.96) brightness(1.03);
+  }
+  .leaflet-control-attribution{font-size:9px; opacity:0.6;}
+
+  /* ---- Top bar ---- */
+  #topbar{
+    position:absolute; top:0; left:0; right:0; z-index:500;
+    padding:calc(env(safe-area-inset-top) + 10px) 16px 10px;
+    background:linear-gradient(180deg, rgba(31,42,68,0.92) 0%, rgba(31,42,68,0.55) 70%, rgba(31,42,68,0) 100%);
+    pointer-events:none;
+  }
+  #topbar h1{
+    margin:0; color:var(--paper);
+    font-family:'Shippori Mincho', serif; font-weight:700;
+    font-size:19px; letter-spacing:0.06em;
+    text-shadow:0 1px 6px rgba(0,0,0,0.25);
+  }
+  #topbar .sub{
+    color:#D8CFB8; font-size:11px; margin-top:2px; letter-spacing:0.04em;
+  }
+  #chips{
+    display:flex; gap:8px; margin-top:10px; overflow-x:auto;
+    pointer-events:auto; padding-bottom:2px;
+  }
+  #chips::-webkit-scrollbar{display:none;}
+  .chip{
+    flex:0 0 auto;
+    font-family:'Zen Kaku Gothic New', sans-serif;
+    font-size:12.5px; font-weight:700;
+    color:var(--paper); background:rgba(255,255,255,0.12);
+    border:1px solid rgba(255,255,255,0.35);
+    border-radius:100px; padding:6px 14px;
+    display:flex; align-items:center; gap:5px;
+  }
+  .chip .dot{width:6px; height:6px; border-radius:50%; background:currentColor;}
+  .chip.active{
+    background:var(--vermillion); border-color:var(--vermillion); color:#fff;
+  }
+
+  /* ---- Custom pin ---- */
+  .pin{
+    width:30px; height:30px; border-radius:50%;
+    background:var(--paper);
+    border:2px solid var(--ink);
+    display:flex; align-items:center; justify-content:center;
+    font-size:14px;
+    box-shadow:0 2px 6px rgba(31,42,68,0.35);
+  }
+  .pin.hi{
+    background:var(--vermillion); border-color:var(--vermillion); color:#fff;
+  }
+
+  /* ---- Bottom sheet ---- */
+  #sheet-scrim{
+    position:absolute; inset:0; z-index:600;
+    background:rgba(31,42,68,0.28);
+    opacity:0; pointer-events:none;
+    transition:opacity 0.25s ease;
+  }
+  #sheet-scrim.show{opacity:1; pointer-events:auto;}
+
+  #sheet{
+    position:absolute; left:0; right:0; bottom:0; z-index:700;
+    background:var(--paper);
+    border-top:1px solid var(--line);
+    border-radius:20px 20px 0 0;
+    box-shadow:0 -8px 24px rgba(31,42,68,0.22);
+    transform:translateY(105%);
+    transition:transform 0.32s cubic-bezier(.32,.72,0,1);
+    max-height:62vh;
+    display:flex; flex-direction:column;
+    padding-bottom:env(safe-area-inset-bottom);
+  }
+  #sheet.show{transform:translateY(0);}
+  #sheet .grabber{
+    width:36px; height:4px; border-radius:4px; background:var(--line);
+    margin:10px auto 4px;
+  }
+  #sheet-body{
+    padding:6px 22px 24px; overflow-y:auto;
+  }
+  #sheet-cat{
+    display:inline-flex; align-items:center; gap:6px;
+    font-size:11px; font-weight:700; color:var(--moss);
+    letter-spacing:0.08em; margin-top:6px;
+  }
+  #sheet-cat::before{content:"●"; font-size:8px;}
+  #sheet-name{
+    font-family:'Shippori Mincho', serif; font-weight:700;
+    font-size:22px; margin:6px 0 2px; line-height:1.35;
+  }
+  #sheet-addr{
+    font-size:13px; color:#5b5748; line-height:1.5; margin-bottom:10px;
+  }
+  #sheet-note{
+    font-size:13.5px; line-height:1.7; color:var(--ink);
+    background:var(--paper-2); border-radius:12px; padding:12px 14px;
+    margin-bottom:16px; border:1px solid var(--line);
+  }
+  #sheet-actions{display:flex; gap:10px;}
+  .btn{
+    flex:1; display:flex; align-items:center; justify-content:center; gap:6px;
+    padding:13px 10px; border-radius:100px;
+    font-family:'Zen Kaku Gothic New', sans-serif; font-weight:700; font-size:13.5px;
+    text-decoration:none; border:none; cursor:pointer;
+  }
+  .btn-play{
+    background:var(--vermillion); color:#fff;
+    box-shadow:0 3px 10px rgba(196,69,28,0.35);
+  }
+  .btn-nav{
+    background:transparent; color:var(--ink); border:1.5px solid var(--ink);
+  }
+
+  /* ---- Empty-state hint (first load) ---- */
+  #hint{
+    position:absolute; left:16px; right:16px; z-index:400;
+    bottom:calc(env(safe-area-inset-bottom) + 18px);
+    background:rgba(31,42,68,0.92); color:var(--paper);
+    font-size:12.5px; text-align:center; line-height:1.6;
+    border-radius:14px; padding:12px 16px;
+    box-shadow:0 6px 18px rgba(0,0,0,0.25);
+  }
+  #hint b{color:#fff;}
+  #hint.hide{display:none;}
+</style>
+</head>
+<body>
+
+<div id="map"></div>
+
+<div id="topbar">
+  <h1>臉書美食地圖</h1>
+  <div class="sub">從珍藏短片轉來的旅の栞 · reel2map</div>
+  <div id="chips"></div>
+</div>
+
+<div id="hint">📍 點地圖上的圓形印章看店家資訊<br>看完短片後<b>返回這裡即可</b>，不會弄丟位置</div>
+
+<div id="sheet-scrim"></div>
+<div id="sheet">
+  <div class="grabber"></div>
+  <div id="sheet-body">
+    <div id="sheet-cat"></div>
+    <div id="sheet-name"></div>
+    <div id="sheet-addr"></div>
+    <div id="sheet-note"></div>
+    <div id="sheet-actions">
+      <a id="sheet-play" class="btn btn-play" target="_blank" rel="noopener">🎬 看短片</a>
+      <a id="sheet-nav" class="btn btn-nav" target="_blank" rel="noopener">🧭 導航</a>
+    </div>
+  </div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<script>
+/* ============================================================
+   reel2map 資料層
+   新增分類：在下方 DATA 加一個 {category: "分類名", points:[...]} 區塊
+   新增地點：在對應分類的 points 陣列加一筆 {name, lat, lng, addr, video, note}
+   ============================================================ */
+const DATA = [
+  {
+    category: "福岡",
+    color: "#1F2A44",
+    points: [
+      { name:"L'AS FUKUOKA", lat:33.5826125, lng:130.4021412, addr:"福岡県福岡市中央区薬院1-6-7 ヴァンクール薬院1F",
+        video:"https://www.facebook.com/reel/1698085801491665/",
+        note:"米其林必比登東京名店的福岡店，7/13起有甜點推車。注意：Google地圖登錄地址為渡辺通2-7-12，出發前請確認" },
+      { name:"おおとう花公園（道の駅おおとう桜街道横）", lat:33.627292, lng:130.8448733, addr:"福岡県田川郡大任町今任原1339",
+        video:"https://www.facebook.com/reel/27514336551553427/",
+        note:"向日葵花田，見頃7月上旬〜8月上旬。免費入園、免費停車約500台，展望台9:00-16:30" },
+      { name:"Siro Coffee", lat:33.5799567, lng:130.3617412, addr:"福岡県福岡市早良区城西2丁目12-16",
+        video:"https://www.facebook.com/reel/4612406192375002/",
+        note:"500円モーニング。週二、週三公休" },
+      { name:"coffee環 -kaN-", lat:33.5790058, lng:130.4093119, addr:"福岡県福岡市中央区清川2-18-19 GRAND BASE天神南101",
+        video:"https://www.facebook.com/reel/1034571452765668/",
+        note:"可喝到茨城名店「将軍珈琲」風味的隱藏咖啡店。週一公休，營業至23:00" },
+      { name:"ごはん処山之口", lat:33.8437183, lng:130.6919906, addr:"福岡県遠賀郡水巻町下二西3丁目16-10",
+        video:"https://www.facebook.com/reel/1327516499278410/",
+        note:"午餐完全預約制（2日前電話093-201-1100，2名以上）。晚間同址為炭火焼山之口" },
+      { name:"LATTE ART MANIA Fukuoka", lat:33.5897878, lng:130.3904975, addr:"福岡県福岡市中央区大名2丁目12-18",
+        video:"https://www.facebook.com/reel/990732177047101/",
+        note:"東京人氣拉花咖啡店福岡店，每日9:00-23:00，客滿時限時60分" },
+      { name:"八女津媛神社", lat:33.1587228, lng:130.8183894, addr:"福岡県八女市矢部村北矢部4014",
+        video:"https://www.facebook.com/reel/848262704996054/",
+        note:"「八女」地名由來的1300年古社，岩窟下本殿與美肌靈水「媛しずく」，樹齡600年權現杉。參拜自由免費，有停車場" },
+      { name:"珈琲とパン ふたつ", lat:33.5787944, lng:130.406059, addr:"福岡県福岡市中央区白金1-8-10",
+        video:"https://www.facebook.com/reel/1336274778108445/",
+        note:"FUK COFFEE×ベーカリータツヤ聯名古旅籠咖啡，1F麵包店2F咖啡座位。週四公休，完全無現金，薬院駅徒步7分" },
+      { name:"室山熊野神社", lat:33.2543189, lng:130.7795666, addr:"福岡県八女市星野村11003",
+        video:"https://www.facebook.com/reel/826111403445452/",
+        note:"1226年創建，365階苔石梯、樹齡500年大杉、けほぎ岩隧道。參拜自由，停車約10台，夏季涼爽，山路窄慎駛" },
+      { name:"コナズ珈琲 香椎浜店", lat:33.6586292, lng:130.4324427, addr:"福岡県福岡市東区香椎浜3-1-41",
+        video:"https://www.facebook.com/reel/1009874068428983/",
+        note:"夏威夷風鬆餅咖啡，品牌首間海景店，2樓海景、寵物可同行露台。香椎いーなテラス內" },
+      { name:"南国フルーツパーラー", lat:33.5877916, lng:130.3999848, addr:"福岡県福岡市中央区天神2-2-20 警固神社社務所ビル2F",
+        video:"https://www.facebook.com/reel/950107017848445/",
+        note:"老舖水果店直營，天神駅徒步2分。午餐時段穴場、下午甜點人潮多，半個室與寵物可同行露台" },
+      { name:"博多天ぷら 食堂◎まるに 天神本店", lat:33.589917, lng:130.3989759, addr:"福岡県福岡市中央区天神2-11-3 ソラリアステージ地下2F",
+        video:"https://www.facebook.com/reel/1711979036468787/",
+        note:"天神駅直結，午餐950円起、飯與味噌湯免費續，11:00-23:00晝飲OK" },
+      { name:"NO COFFEE TENJIN PARK", lat:33.5920332, lng:130.4043136, addr:"福岡県福岡市中央区西中洲6-36 ハレノガーデンEAST",
+        video:"https://www.facebook.com/reel/976312148581374/",
+        note:"NO COFFEE新店，天神中央公園內河畔露台，限定甜點與周邊。8:30開門適合晨活，週一公休" },
+    ]
+  }
+  // 之後新增分類（例如佐賀）：在這裡加一個 { category:"佐賀", color:"#6B7A5E", points:[...] }
+];
+
+/* ============================================================
+   渲染層
+   ============================================================ */
+const map = L.map('map', { zoomControl:false, attributionControl:true })
+  .setView([33.60, 130.45], 10);
+
+L.control.zoom({position:'bottomright'}).addTo(map);
+
+L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', {
+  maxZoom: 19,
+  attribution: '&copy; OpenStreetMap &copy; CARTO'
+}).addTo(map);
+
+const allBounds = [];
+const markersByCat = {};
+let activeCat = "全部";
+
+function makeIcon(hi){
+  return L.divIcon({
+    className:'', html:`<div class="pin${hi?' hi':''}">🍡</div>`,
+    iconSize:[30,30], iconAnchor:[15,15]
+  });
+}
+
+function openSheet(p){
+  document.getElementById('sheet-cat').textContent = p.category;
+  document.getElementById('sheet-name').textContent = p.name;
+  document.getElementById('sheet-addr').textContent = p.addr;
+  document.getElementById('sheet-note').textContent = p.note;
+  document.getElementById('sheet-play').href = p.video;
+  document.getElementById('sheet-nav').href = 'https://www.google.com/maps/search/?api=1&query=' + encodeURIComponent(p.addr);
+  document.getElementById('sheet').classList.add('show');
+  document.getElementById('sheet-scrim').classList.add('show');
+  document.getElementById('hint').classList.add('hide');
+}
+function closeSheet(){
+  document.getElementById('sheet').classList.remove('show');
+  document.getElementById('sheet-scrim').classList.remove('show');
+}
+document.getElementById('sheet-scrim').addEventListener('click', closeSheet);
+document.getElementById('sheet').querySelector('.grabber').addEventListener('click', closeSheet);
+
+DATA.forEach(group => {
+  markersByCat[group.category] = [];
+  group.points.forEach(p => {
+    p.category = group.category;
+    const marker = L.marker([p.lat, p.lng], { icon: makeIcon(false) }).addTo(map);
+    marker.on('click', () => openSheet(p));
+    markersByCat[group.category].push(marker);
+    allBounds.push([p.lat, p.lng]);
+  });
+});
+if (allBounds.length) map.fitBounds(allBounds, { padding:[60,60] });
+
+/* ---- Chips ---- */
+const chipsEl = document.getElementById('chips');
+function renderChips(){
+  const cats = ["全部", ...DATA.map(g=>g.category)];
+  chipsEl.innerHTML = cats.map(c =>
+    `<div class="chip${c===activeCat?' active':''}" data-cat="${c}"><span class="dot"></span>${c}</div>`
+  ).join('');
+  chipsEl.querySelectorAll('.chip').forEach(el => {
+    el.addEventListener('click', () => {
+      activeCat = el.dataset.cat;
+      renderChips();
+      applyFilter();
+    });
+  });
+}
+function applyFilter(){
+  Object.entries(markersByCat).forEach(([cat, markers]) => {
+    const show = activeCat === "全部" || activeCat === cat;
+    markers.forEach(m => {
+      const el = m.getElement();
+      if (el) el.style.display = show ? '' : 'none';
+    });
+  });
+}
+renderChips();
+</script>
+</body>
+</html>
