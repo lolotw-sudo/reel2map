@@ -196,12 +196,42 @@ body{
    reel2map 資料層
    資料來源是 Google 試算表（發布為 CSV），不寫在這個檔案裡。
    要新增地點：直接在試算表加一列，重新整理這個網頁就會出現。
-   欄位：名稱 / 地址 / 緯度 / 經度 / 影片連結 / 備註 / 分類
+   欄位：名稱 / 地址 / 緯度 / 經度 / 影片連結 / 備註 / 分類 / 類型（選填）
+   「類型」欄有填就以它為準（填類型名稱或任何 emoji 都可以）；
+   留空則依店名＋備註的關鍵字自動判定圖示。
    ============================================================ */
 
 const CSV_URL = 'https://docs.google.com/spreadsheets/d/e/2PACX-1vQi4beiBychHbMEZRHcu1Sd0_n77o6UXQ1_s81carfdzJD-fwGYO9wmJXXQr55s-k1kfn4v5m5XywP6/pub?gid=46533551&single=true&output=csv';
 
 const CAT_COLORS = ['#1F2A44', '#6B7A5E', '#8C6A3F', '#4A6572', '#8F5A5A', '#5B5E8C'];
+
+/* 地標類型：由上往下比對，先中先贏。試算表「類型」欄有填時直接採用，不走這裡 */
+const TYPES = [
+  { t:'神社',   e:'⛩️', re:/神社|神宮|八幡宮|稲荷|御朱印|藏院|蔵院|お寺/ },
+  { t:'壽司',   e:'🍣', re:/寿司|鮨|壽司|すし|sushi/i },
+  { t:'居酒屋', e:'🏮', re:/居酒屋|屋台|酒場/ },
+  { t:'海鮮',   e:'🦐', re:/海鮮|鮮魚|魚市場|おさかな|うに|雲丹|牡蠣|生蠔|海胆/ },
+  { t:'燒肉',   e:'🥩', re:/焼肉|燒肉|焼鳥|串焼|ホルモン|ジンギスカン|じんぎすかん|骨付|牛丼|ステーキ/ },
+  { t:'炸物',   e:'🍤', re:/天ぷら|天婦羅|とんかつ|豬排|唐揚|フライ/ },
+  { t:'咖啡',   e:'☕', re:/咖啡|珈琲|コーヒー|カフェ|coffee|cafe|喫茶/i },
+  { t:'甜點',   e:'🍰', re:/甜點|スイーツ|パフェ|聖代|かき氷|ジェラート|甘味|菓子|ケーキ|プリン|霜淇淋|アイス|ドーナツ|donut|鬆餅|パンケーキ|フルーツ|水果/i },
+  { t:'麵包',   e:'🥐', re:/パン|ぱん|麵包|麺包|ベーカリー|bakery|フランス/i },
+  { t:'麵食',   e:'🍜', re:/ラーメン|拉麵|中華そば|そうめん|蕎麦|そば|うどん|烏龍麵|冷麺|冷麵|麺|豚骨/ },
+  { t:'玩樂',   e:'🎡', re:/免稅|免税|ゲーム|雲霄飛車|teamLab|樂園|楽園/i },
+  { t:'景點',   e:'🏞️', re:/公園|花田|峡|渓谷|滝|瀑布|鍾乳洞|夜景|展望|タワー|道の駅|温泉|市場|海灘/ },
+];
+const TYPE_DEFAULT = { t:'美食', e:'🍽️' };
+
+/* 回傳 {t:類型名, e:圖示}。手動填的「類型」優先：
+   對得上類型名就用對應圖示；對不上就把填的字直接當圖示（所以填 emoji 也行） */
+function typeOf(p){
+  if (p.type){
+    const hit = TYPES.find(x => x.t === p.type);
+    return hit || { t: p.type, e: p.type };
+  }
+  const text = p.name + ' ' + p.note;
+  return TYPES.find(x => x.re.test(text)) || TYPE_DEFAULT;
+}
 
 /* 逗號分隔解析：支援引號包住、內含逗號或換行的欄位 */
 function parseCSV(text){
@@ -229,7 +259,8 @@ function rowsToData(rows){
   const header = rows[0].map(h => h.trim());
   const idx = name => header.indexOf(name);
   const iName = idx('名稱'), iAddr = idx('地址'), iLat = idx('緯度'),
-        iLng = idx('經度'), iVideo = idx('影片連結'), iNote = idx('備註'), iCat = idx('分類');
+        iLng = idx('經度'), iVideo = idx('影片連結'), iNote = idx('備註'),
+        iCat = idx('分類'), iType = idx('類型');   // 類型欄可能不存在（iType = -1），typeOf 會自動判定
 
   const byCat = new Map();
   rows.slice(1).forEach(r => {
@@ -243,7 +274,8 @@ function rowsToData(rows){
       lat, lng,
       video: (r[iVideo] || '').trim(),
       note: (r[iNote] || '').trim(),
-      category: cat
+      category: cat,
+      type: (iType >= 0 && r[iType] || '').trim()
     });
   });
 
@@ -270,15 +302,16 @@ const markersByCat = {};
 let DATA = [];
 let activeCat = "全部";
 
-function makeIcon(hi){
+function makeIcon(emoji, hi){
   return L.divIcon({
-    className:'', html:`<div class="pin${hi?' hi':''}">🍡</div>`,
+    className:'', html:`<div class="pin${hi?' hi':''}">${emoji}</div>`,
     iconSize:[30,30], iconAnchor:[15,15]
   });
 }
 
 function openSheet(p){
-  document.getElementById('sheet-cat').textContent = p.category;
+  const ty = typeOf(p);
+  document.getElementById('sheet-cat').textContent = p.category + ' · ' + ty.e + ' ' + ty.t;
   document.getElementById('sheet-name').textContent = p.name;
   document.getElementById('sheet-addr').textContent = p.addr;
   document.getElementById('sheet-note').textContent = p.note;
@@ -324,7 +357,7 @@ function render(){
   DATA.forEach(group => {
     markersByCat[group.category] = [];
     group.points.forEach(p => {
-      const marker = L.marker([p.lat, p.lng], { icon: makeIcon(false) }).addTo(map);
+      const marker = L.marker([p.lat, p.lng], { icon: makeIcon(typeOf(p).e, false) }).addTo(map);
       marker.on('click', () => openSheet(p));
       markersByCat[group.category].push(marker);
       allBounds.push([p.lat, p.lng]);
