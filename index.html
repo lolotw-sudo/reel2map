@@ -122,8 +122,12 @@ body{
   font-size:22px; margin:6px 0 2px; line-height:1.35;
 }
 #sheet-addr{
-  font-size:13px; color:#5b5748; line-height:1.5; margin-bottom:10px;
+  font-size:13px; color:#5b5748; line-height:1.5; margin-bottom:2px;
 }
+#sheet-dist{
+  font-size:12.5px; color:var(--moss); font-weight:700; margin-bottom:10px;
+}
+#sheet-dist:empty{display:none;}
 #sheet-note{
   font-size:13.5px; line-height:1.7; color:var(--ink);
   background:var(--paper-2); border-radius:12px; padding:12px 14px;
@@ -142,6 +146,22 @@ body{
 }
 .btn-nav{
   background:transparent; color:var(--ink); border:1.5px solid var(--ink);
+}
+
+/* ---- Locate control ---- */
+.locate-btn{
+  width:36px; height:36px; border-radius:50%;
+  background:var(--paper); border:2px solid var(--ink);
+  display:flex; align-items:center; justify-content:center;
+  font-size:17px; cursor:pointer;
+  box-shadow:0 2px 8px rgba(31,42,68,0.3);
+}
+.locate-btn.active{background:var(--vermillion); border-color:var(--vermillion);}
+.locate-btn.loading{opacity:0.55;}
+.me-dot{
+  width:16px; height:16px; border-radius:50%;
+  background:#2F6FE4; border:3px solid #fff;
+  box-shadow:0 0 0 4px rgba(47,111,228,0.25), 0 2px 6px rgba(0,0,0,0.3);
 }
 
 /* ---- Status strip (loading / error / hint) ---- */
@@ -182,6 +202,7 @@ body{
     <div id="sheet-cat"></div>
     <div id="sheet-name"></div>
     <div id="sheet-addr"></div>
+    <div id="sheet-dist"></div>
     <div id="sheet-note"></div>
     <div id="sheet-actions">
       <a id="sheet-play" class="btn btn-play" target="_blank" rel="noopener">🎬 看短片</a>
@@ -301,6 +322,64 @@ const chipsEl = document.getElementById('chips');
 const markersByCat = {};
 let DATA = [];
 let activeCat = "全部";
+let userLatLng = null;
+let userMarker = null;
+
+/* ---- 目前位置：算距離用經緯度直線距離（Haversine），不含實際路徑 ---- */
+function haversine(lat1, lng1, lat2, lng2){
+  const R = 6371000, toRad = d => d * Math.PI / 180;
+  const dLat = toRad(lat2 - lat1), dLng = toRad(lng2 - lng1);
+  const a = Math.sin(dLat/2)**2 + Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLng/2)**2;
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+function formatDist(m){
+  return m < 1000 ? Math.round(m) + ' 公尺' : (m / 1000).toFixed(1) + ' 公里';
+}
+
+function locateMe(){
+  const btn = document.getElementById('locate-btn');
+  if (!navigator.geolocation){
+    statusEl.classList.remove('hide');
+    statusEl.textContent = '這個瀏覽器不支援定位功能';
+    return;
+  }
+  btn.classList.add('loading');
+  navigator.geolocation.getCurrentPosition(
+    pos => {
+      userLatLng = [pos.coords.latitude, pos.coords.longitude];
+      btn.classList.remove('loading');
+      btn.classList.add('active');
+      if (userMarker) map.removeLayer(userMarker);
+      userMarker = L.marker(userLatLng, {
+        icon: L.divIcon({ className:'', html:'<div class="me-dot"></div>', iconSize:[16,16], iconAnchor:[8,8] }),
+        zIndexOffset: 1000, interactive:false
+      }).addTo(map);
+      statusEl.classList.remove('hide');
+      statusEl.textContent = '📍 已定位，點圖釘看跟你的距離';
+    },
+    err => {
+      btn.classList.remove('loading');
+      statusEl.classList.remove('hide');
+      statusEl.textContent = err.code === 1
+        ? '無法定位：請允許瀏覽器使用你的位置'
+        : '無法定位，請稍後再試';
+    },
+    { enableHighAccuracy:true, timeout:10000 }
+  );
+}
+
+const LocateControl = L.Control.extend({
+  options: { position:'topright' },
+  onAdd: function(){
+    const btn = L.DomUtil.create('div', 'locate-btn');
+    btn.id = 'locate-btn';
+    btn.textContent = '🧭';
+    L.DomEvent.disableClickPropagation(btn);
+    L.DomEvent.on(btn, 'click', locateMe);
+    return btn;
+  }
+});
+map.addControl(new LocateControl());
 
 function makeIcon(emoji, hi){
   return L.divIcon({
@@ -314,6 +393,9 @@ function openSheet(p){
   document.getElementById('sheet-cat').textContent = p.category + ' · ' + ty.e + ' ' + ty.t;
   document.getElementById('sheet-name').textContent = p.name;
   document.getElementById('sheet-addr').textContent = p.addr;
+  document.getElementById('sheet-dist').textContent = userLatLng
+    ? '📍 距離你約 ' + formatDist(haversine(userLatLng[0], userLatLng[1], p.lat, p.lng))
+    : '';
   document.getElementById('sheet-note').textContent = p.note;
   document.getElementById('sheet-play').href = p.video;
   document.getElementById('sheet-nav').href = 'https://www.google.com/maps/search/?api=1&query=' + encodeURIComponent(p.addr);
