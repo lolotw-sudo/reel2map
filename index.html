@@ -222,7 +222,17 @@ body{
    留空則依店名＋備註的關鍵字自動判定圖示。
    ============================================================ */
 
-const CSV_URL = 'https://docs.google.com/spreadsheets/d/e/2PACX-1vQi4beiBychHbMEZRHcu1Sd0_n77o6UXQ1_s81carfdzJD-fwGYO9wmJXXQr55s-k1kfn4v5m5XywP6/pub?gid=46533551&single=true&output=csv';
+/* 每個人一張地圖：網址加 ?who=jun 就讀 Jun 的試算表；沒帶就是 LOLO 的 */
+const MAPS = {
+  lolo: { title:'臉書美食地圖', center:[33.60, 130.45], csv:'https://docs.google.com/spreadsheets/d/e/2PACX-1vQi4beiBychHbMEZRHcu1Sd0_n77o6UXQ1_s81carfdzJD-fwGYO9wmJXXQr55s-k1kfn4v5m5XywP6/pub?gid=46533551&single=true&output=csv' },
+  jun:  { title:'Jun 的美食地圖', center:[35.68, 139.76], csv:'https://docs.google.com/spreadsheets/d/e/2PACX-1vShOS6TPKiaDpSfbLNEkp_hMPCKtnQpD_omiN0kljbXAs4iGjmK-CB9r9p5yi-1ThxZ2EkRnKSm2pRq/pub?gid=1634312988&single=true&output=csv' },
+};
+const WHO = new URLSearchParams(location.search).get('who');
+const ME = MAPS.hasOwnProperty(WHO) ? MAPS[WHO] : MAPS.lolo;
+const CSV_URL = ME.csv;
+document.title = ME.title + ' · reel2map';
+document.querySelector('h1').textContent = ME.title;
+document.querySelector('meta[name=apple-mobile-web-app-title]').content = ME.title;   // 加到主畫面時的名稱
 
 const CAT_COLORS = ['#1F2A44', '#6B7A5E', '#8C6A3F', '#4A6572', '#8F5A5A', '#5B5E8C'];
 
@@ -310,7 +320,7 @@ function rowsToData(rows){
    ============================================================ */
 
 const map = L.map('map', { zoomControl:false, attributionControl:true })
-  .setView([33.60, 130.45], 10);
+  .setView(ME.center, 10);
 L.control.zoom({position:'bottomright'}).addTo(map);
 L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
   maxZoom: 19,
@@ -459,8 +469,7 @@ async function load(){
     const res = await fetch(CSV_URL + '&t=' + Date.now());   // 加時間戳避開快取
     if (!res.ok) throw new Error('HTTP ' + res.status);
     const rows = parseCSV(await res.text());
-    if (rows.length < 2) throw new Error('empty');
-    DATA = rowsToData(rows);
+    DATA = rows.length < 2 ? [] : rowsToData(rows);   // 只有標題列＝還沒有地點，照樣顯示空地圖
     render();
   } catch (err) {
     statusEl.innerHTML = '讀不到地點資料，可能是網路不通或試算表尚未發布。<br><button class="retry">再試一次</button>';
