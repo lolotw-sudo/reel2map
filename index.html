@@ -78,15 +78,8 @@ body{
   font-size:14px;
   box-shadow:0 2px 6px rgba(31,42,68,0.35);
 }
-/* 收藏的地標：右上角一顆小愛心，不加任何彩色光暈 */
-.pin{position:relative;}
-.pin .fav-badge{
-  position:absolute; top:-6px; right:-6px;
-  width:15px; height:15px; border-radius:50%;
-  background:var(--paper); border:1.5px solid var(--ink);
-  color:var(--vermillion); font-size:9px; line-height:1;
-  display:flex; align-items:center; justify-content:center;
-}
+/* 收藏的地標：外框加粗變紅，不加任何彩色光暈 */
+.pin.fav{border:3.5px solid #D62828;}
 .pin.hi{
   background:var(--vermillion); border-color:var(--vermillion); color:#fff;
 }
@@ -454,7 +447,7 @@ map.addControl(new LocateControl());
 
 function makeIcon(emoji, hi, fav){
   return L.divIcon({
-    className:'', html:`<div class="pin${hi?' hi':''}">${emoji}${fav?'<span class="fav-badge">♥</span>':''}</div>`,
+    className:'', html:`<div class="pin${hi?' hi':''}${fav?' fav':''}">${emoji}</div>`,
     iconSize:[30,30], iconAnchor:[15,15]
   });
 }
