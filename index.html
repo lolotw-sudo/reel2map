@@ -158,6 +158,7 @@ body{
   display:block; font-size:11px; font-weight:700; color:var(--moss);
   letter-spacing:0.08em; margin-bottom:6px;
 }
+#sheet-sync{font-weight:400; color:#8a8473; margin-left:8px; letter-spacing:0;}
 #sheet-memo{
   display:block; width:100%; min-height:72px; resize:vertical;
   font-family:'Zen Kaku Gothic New', sans-serif;
@@ -241,7 +242,7 @@ body{
     <div id="sheet-addr"></div>
     <div id="sheet-dist"></div>
     <div id="sheet-note"></div>
-    <label id="sheet-memo-label" for="sheet-memo">✏️ 我的說明</label>
+    <label id="sheet-memo-label" for="sheet-memo">✏️ 我的說明<span id="sheet-sync"></span></label>
     <textarea id="sheet-memo" placeholder="寫點自己的筆記，例如：想點什麼、跟誰去、營業時間…"></textarea>
     <div id="sheet-actions">
       <a id="sheet-play" class="btn btn-play" target="_blank" rel="noopener">🎬 看短片</a>
@@ -257,13 +258,19 @@ body{
    資料來源是 Google 試算表（發布為 CSV），不寫在這個檔案裡。
    要新增地點：直接在試算表加一列，重新整理這個網頁就會出現。
    欄位：名稱 / 地址 / 緯度 / 經度 / 影片連結 / 備註 / 分類 / 類型（選填）
+         / 收藏 / 我的說明（選填，網頁按愛心、打說明時由 Apps Script 自動寫入）
    「類型」欄有填就以它為準（填類型名稱或任何 emoji 都可以）；
    留空則依店名＋備註的關鍵字自動判定圖示。
    ============================================================ */
 
-/* 每個人一張地圖：網址加 ?who=jun 就讀 Jun 的試算表；沒帶就是 LOLO 的 */
+/* 每個人一張地圖：網址加 ?who=jun 就讀 Jun 的試算表；沒帶就是 LOLO 的
+   sync：收藏／我的說明要寫回試算表的 Apps Script 端點。沒設定的地圖只存在本機 */
+const SYNC_LOLO = {
+  url: 'https://script.google.com/macros/s/AKfycbyKrqu3H5vKUM8tR0Nv6Da9pBHW6hMff_zQt1C0eEcTDG4Fnt6KRUlR1wIWEtctzXIo/exec',
+  key: 'r2m-note-7Kq3vX9p'   // 只能改收藏／我的說明兩欄的公開金鑰（見 apps-script/setmeta.gs）
+};
 const MAPS = {
-  lolo: { title:'臉書美食地圖', center:[33.60, 130.45], csv:'https://docs.google.com/spreadsheets/d/e/2PACX-1vQi4beiBychHbMEZRHcu1Sd0_n77o6UXQ1_s81carfdzJD-fwGYO9wmJXXQr55s-k1kfn4v5m5XywP6/pub?gid=46533551&single=true&output=csv' },
+  lolo: { title:'臉書美食地圖', center:[33.60, 130.45], csv:'https://docs.google.com/spreadsheets/d/e/2PACX-1vQi4beiBychHbMEZRHcu1Sd0_n77o6UXQ1_s81carfdzJD-fwGYO9wmJXXQr55s-k1kfn4v5m5XywP6/pub?gid=46533551&single=true&output=csv', sync:SYNC_LOLO },
   jun:  { title:'Jun 的美食地圖', center:[35.68, 139.76], csv:'https://docs.google.com/spreadsheets/d/e/2PACX-1vShOS6TPKiaDpSfbLNEkp_hMPCKtnQpD_omiN0kljbXAs4iGjmK-CB9r9p5yi-1ThxZ2EkRnKSm2pRq/pub?gid=1634312988&single=true&output=csv' },
 };
 const WHO = new URLSearchParams(location.search).get('who');
@@ -331,10 +338,12 @@ function rowsToData(rows){
   const idx = name => header.indexOf(name);
   const iName = idx('名稱'), iAddr = idx('地址'), iLat = idx('緯度'),
         iLng = idx('經度'), iVideo = idx('影片連結'), iNote = idx('備註'),
-        iCat = idx('分類'), iType = idx('類型');   // 類型欄可能不存在（iType = -1），typeOf 會自動判定
+        iCat = idx('分類'), iType = idx('類型'),   // 類型欄可能不存在（iType = -1），typeOf 會自動判定
+        iFav = idx('收藏'), iMemo = idx('我的說明');
 
   const byCat = new Map();
   rows.slice(1).forEach(r => {
+    const cell = i => (i >= 0 && r[i] || '').trim();   // 選填欄位不存在時 i = -1
     const lat = parseFloat(r[iLat]), lng = parseFloat(r[iLng]);
     if (!isFinite(lat) || !isFinite(lng)) return;   // 沒有有效座標就跳過，不畫錯位置
     const cat = (r[iCat] || '未分類').trim();
@@ -346,7 +355,9 @@ function rowsToData(rows){
       video: (r[iVideo] || '').trim(),
       note: (r[iNote] || '').trim(),
       category: cat,
-      type: (iType >= 0 && r[iType] || '').trim()
+      type: cell(iType),
+      fav: cell(iFav) !== '',
+      memo: cell(iMemo).replace(/^'(?=[=+\-@])/, '')   // Apps Script 防公式注入加的單引號拿掉
     });
   });
 
@@ -356,23 +367,81 @@ function rowsToData(rows){
 }
 
 /* ============================================================
-   收藏＋我的說明：存在這支手機/瀏覽器的 localStorage，不會寫回試算表
+   收藏＋我的說明
+   有設定 sync 的地圖：寫回試算表「收藏」「我的說明」兩欄，換手機也看得到。
+   本機 localStorage 只當暫存：
+   - 剛改過的（10 分鐘內）先以本機為準，因為發布的 CSV 要幾分鐘才會更新
+   - 沒送成功的（dirty）下次開網頁會自動補送
+   沒設定 sync 的地圖（例如 Jun）就只存在本機。
    以「名稱＋座標」辨識地點，試算表改了店名或座標就會對不上
    ============================================================ */
+
+const SYNC = ME.sync || null;
+const FRESH_MS = 10 * 60 * 1000;
 
 function placeKey(p){ return p.name + '|' + p.lat.toFixed(5) + ',' + p.lng.toFixed(5); }
 function loadStore(){
   try {
     const s = JSON.parse(localStorage.getItem(STORE_KEY));
-    if (s && typeof s === 'object') return { favs: s.favs || {}, memos: s.memos || {} };
+    if (s && typeof s === 'object') return s;
   } catch (e) {}
-  return { favs:{}, memos:{} };
+  return {};
 }
 const store = loadStore();
+store.edits = store.edits || {};   // key → { fav?, memo?, t, dirty }
 function saveStore(){
   try { localStorage.setItem(STORE_KEY, JSON.stringify(store)); } catch (e) {}
 }
-const isFav = p => !!store.favs[placeKey(p)];
+const isFav = p => !!p.fav;
+
+/* 試算表資料載入後，套上本機的暫存修改 */
+function mergeLocal(points){
+  // 舊版只存本機的收藏／說明：試算表那格還空著才補上去
+  const legacy = { favs: store.favs || {}, memos: store.memos || {} };
+  delete store.favs; delete store.memos;
+
+  const now = Date.now();
+  points.forEach(p => {
+    const k = placeKey(p);
+    if (legacy.favs[k] && !p.fav) edit(k, { fav:true });
+    if (legacy.memos[k] && !p.memo) edit(k, { memo:legacy.memos[k] });
+
+    const e = store.edits[k];
+    if (!e) return;
+    if (!SYNC || e.dirty || now - e.t < FRESH_MS){
+      if ('fav' in e) p.fav = e.fav;
+      if ('memo' in e) p.memo = e.memo;
+    } else {
+      delete store.edits[k];   // 試算表已經是新的了，本機暫存可以丟
+    }
+  });
+  saveStore();
+  if (SYNC) points.forEach(p => { if (store.edits[placeKey(p)]?.dirty) pushMeta(p); });
+}
+
+function edit(k, change){
+  store.edits[k] = Object.assign(store.edits[k] || {}, change, { t:Date.now(), dirty:!!SYNC });
+}
+
+/* 送到 Apps Script；用表單格式 POST，不會觸發 CORS 預檢 */
+const syncEl = () => document.getElementById('sheet-sync');
+async function pushMeta(p){
+  const k = placeKey(p), e = store.edits[k];
+  if (!SYNC || !e) return;
+  const body = new URLSearchParams({ action:'setmeta', key:SYNC.key, name:p.name, lat:p.lat, lng:p.lng });
+  if ('fav' in e) body.set('fav', e.fav ? '1' : '0');
+  if ('memo' in e) body.set('memo', e.memo);
+  const sentAt = e.t;
+  if (currentP === p) syncEl().textContent = '同步中…';
+  let ok = false;
+  try {
+    const res = await fetch(SYNC.url, { method:'POST', body });
+    ok = (await res.text()).trim() === 'ok';
+  } catch (err) {}
+  const now = store.edits[k];
+  if (ok && now && now.t === sentAt){ now.dirty = false; saveStore(); }   // 送出後又改過就等下一輪
+  if (currentP === p) syncEl().textContent = ok ? '✓ 已同步到試算表' : '⚠️ 未同步，下次開網頁會再試';
+}
 
 /* ============================================================
    渲染層
@@ -477,7 +546,8 @@ function openSheet(p){
     ? '📍 距離你約 ' + formatDist(haversine(userLatLng[0], userLatLng[1], p.lat, p.lng))
     : '';
   document.getElementById('sheet-note').textContent = p.note;
-  document.getElementById('sheet-memo').value = store.memos[placeKey(p)] || '';
+  document.getElementById('sheet-memo').value = p.memo || '';
+  syncEl().textContent = '';
   renderFavBtn(p);
   document.getElementById('sheet-play').href = p.video;
   document.getElementById('sheet-nav').href = 'https://www.google.com/maps/search/?api=1&query=' + encodeURIComponent(p.addr);
@@ -495,23 +565,36 @@ document.getElementById('sheet-scrim').addEventListener('click', closeSheet);
 document.getElementById('sheet-fav').addEventListener('click', () => {
   const p = currentP;
   if (!p) return;
-  const k = placeKey(p);
-  if (store.favs[k]) delete store.favs[k];
-  else store.favs[k] = true;
+  p.fav = !p.fav;
+  edit(placeKey(p), { fav:p.fav });
   saveStore();
+  pushMeta(p);
   renderFavBtn(p);
   p.marker.setIcon(makeIcon(typeOf(p).e, false, isFav(p)));
   applyFilter();   // setIcon 會換新的 DOM，要重新套用篩選
 });
 
-/* 邊打邊存，不用按儲存 */
+/* 邊打邊存（本機立即存，停手 1 秒後送試算表），不用按儲存 */
+let memoTimer = null;
+function flushMemo(){
+  if (!memoTimer) return;
+  clearTimeout(memoTimer.id);
+  const p = memoTimer.p;
+  memoTimer = null;
+  pushMeta(p);
+}
 document.getElementById('sheet-memo').addEventListener('input', e => {
-  if (!currentP) return;
-  const k = placeKey(currentP), v = e.target.value;
-  if (v.trim()) store.memos[k] = v;
-  else delete store.memos[k];
+  const p = currentP;
+  if (!p) return;
+  p.memo = e.target.value;
+  edit(placeKey(p), { memo:p.memo });
   saveStore();
+  if (!SYNC) return;
+  if (memoTimer) clearTimeout(memoTimer.id);
+  syncEl().textContent = '…';
+  memoTimer = { p, id:setTimeout(flushMemo, 1000) };
 });
+document.getElementById('sheet-memo').addEventListener('blur', flushMemo);
 document.getElementById('sheet').querySelector('.grabber').addEventListener('click', closeSheet);
 
 function renderChips(){
@@ -540,6 +623,7 @@ function applyFilter(){
 }
 
 function render(){
+  mergeLocal(DATA.flatMap(g => g.points));
   const allBounds = [];
   DATA.forEach(group => {
     markersByCat[group.category] = [];
