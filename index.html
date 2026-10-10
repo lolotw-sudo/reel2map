@@ -78,6 +78,15 @@ body{
   font-size:14px;
   box-shadow:0 2px 6px rgba(31,42,68,0.35);
 }
+/* 收藏的地標：右上角一顆小愛心，不加任何彩色光暈 */
+.pin{position:relative;}
+.pin .fav-badge{
+  position:absolute; top:-6px; right:-6px;
+  width:15px; height:15px; border-radius:50%;
+  background:var(--paper); border:1.5px solid var(--ink);
+  color:var(--vermillion); font-size:9px; line-height:1;
+  display:flex; align-items:center; justify-content:center;
+}
 .pin.hi{
   background:var(--vermillion); border-color:var(--vermillion); color:#fff;
 }
@@ -117,10 +126,21 @@ body{
   letter-spacing:0.08em; margin-top:6px;
 }
 #sheet-cat::before{content:"●"; font-size:8px;}
+#sheet-head{display:flex; align-items:flex-start; gap:10px;}
 #sheet-name{
+  flex:1;
   font-family:'Shippori Mincho', serif; font-weight:700;
   font-size:22px; margin:6px 0 2px; line-height:1.35;
 }
+#sheet-fav{
+  flex:0 0 auto; margin-top:6px;
+  width:38px; height:38px; border-radius:50%;
+  background:transparent; border:1.5px solid var(--ink);
+  color:var(--ink); font-size:18px; line-height:1;
+  display:flex; align-items:center; justify-content:center;
+  cursor:pointer; padding:0;
+}
+#sheet-fav.on{color:var(--vermillion); border-color:var(--vermillion);}
 #sheet-addr{
   font-size:13px; color:#5b5748; line-height:1.5; margin-bottom:2px;
 }
@@ -133,6 +153,20 @@ body{
   background:var(--paper-2); border-radius:12px; padding:12px 14px;
   margin-bottom:16px; border:1px solid var(--line);
 }
+#sheet-note:empty{display:none;}
+#sheet-memo-label{
+  display:block; font-size:11px; font-weight:700; color:var(--moss);
+  letter-spacing:0.08em; margin-bottom:6px;
+}
+#sheet-memo{
+  display:block; width:100%; min-height:72px; resize:vertical;
+  font-family:'Zen Kaku Gothic New', sans-serif;
+  font-size:16px;   /* 16px 以上 iOS 點進去才不會自動放大畫面 */
+  line-height:1.6; color:var(--ink);
+  background:#fff; border:1px solid var(--line); border-radius:12px;
+  padding:10px 12px; margin-bottom:16px; outline:none;
+}
+#sheet-memo:focus{border-color:var(--ink);}
 #sheet-actions{display:flex; gap:10px;}
 .btn{
   flex:1; display:flex; align-items:center; justify-content:center; gap:6px;
@@ -200,10 +234,15 @@ body{
   <div class="grabber"></div>
   <div id="sheet-body">
     <div id="sheet-cat"></div>
-    <div id="sheet-name"></div>
+    <div id="sheet-head">
+      <div id="sheet-name"></div>
+      <button id="sheet-fav" type="button" aria-label="加入收藏">♡</button>
+    </div>
     <div id="sheet-addr"></div>
     <div id="sheet-dist"></div>
     <div id="sheet-note"></div>
+    <label id="sheet-memo-label" for="sheet-memo">✏️ 我的說明</label>
+    <textarea id="sheet-memo" placeholder="寫點自己的筆記，例如：想點什麼、跟誰去、營業時間…"></textarea>
     <div id="sheet-actions">
       <a id="sheet-play" class="btn btn-play" target="_blank" rel="noopener">🎬 看短片</a>
       <a id="sheet-nav" class="btn btn-nav" target="_blank" rel="noopener">🧭 導航</a>
@@ -230,6 +269,7 @@ const MAPS = {
 const WHO = new URLSearchParams(location.search).get('who');
 const ME = MAPS.hasOwnProperty(WHO) ? MAPS[WHO] : MAPS.lolo;
 const CSV_URL = ME.csv;
+const STORE_KEY = 'reel2map:' + (MAPS.hasOwnProperty(WHO) ? WHO : 'lolo');
 document.title = ME.title + ' · reel2map';
 document.querySelector('h1').textContent = ME.title;
 document.querySelector('meta[name=apple-mobile-web-app-title]').content = ME.title;   // 加到主畫面時的名稱
@@ -316,6 +356,25 @@ function rowsToData(rows){
 }
 
 /* ============================================================
+   收藏＋我的說明：存在這支手機/瀏覽器的 localStorage，不會寫回試算表
+   以「名稱＋座標」辨識地點，試算表改了店名或座標就會對不上
+   ============================================================ */
+
+function placeKey(p){ return p.name + '|' + p.lat.toFixed(5) + ',' + p.lng.toFixed(5); }
+function loadStore(){
+  try {
+    const s = JSON.parse(localStorage.getItem(STORE_KEY));
+    if (s && typeof s === 'object') return { favs: s.favs || {}, memos: s.memos || {} };
+  } catch (e) {}
+  return { favs:{}, memos:{} };
+}
+const store = loadStore();
+function saveStore(){
+  try { localStorage.setItem(STORE_KEY, JSON.stringify(store)); } catch (e) {}
+}
+const isFav = p => !!store.favs[placeKey(p)];
+
+/* ============================================================
    渲染層
    ============================================================ */
 
@@ -331,7 +390,9 @@ const statusEl = document.getElementById('status');
 const chipsEl = document.getElementById('chips');
 const markersByCat = {};
 let DATA = [];
+const FAV_CHIP = "♥ 收藏";
 let activeCat = "全部";
+let currentP = null;
 let userLatLng = null;
 let userMarker = null;
 
@@ -391,14 +452,23 @@ const LocateControl = L.Control.extend({
 });
 map.addControl(new LocateControl());
 
-function makeIcon(emoji, hi){
+function makeIcon(emoji, hi, fav){
   return L.divIcon({
-    className:'', html:`<div class="pin${hi?' hi':''}">${emoji}</div>`,
+    className:'', html:`<div class="pin${hi?' hi':''}">${emoji}${fav?'<span class="fav-badge">♥</span>':''}</div>`,
     iconSize:[30,30], iconAnchor:[15,15]
   });
 }
 
+function renderFavBtn(p){
+  const btn = document.getElementById('sheet-fav');
+  const on = isFav(p);
+  btn.textContent = on ? '♥' : '♡';
+  btn.classList.toggle('on', on);
+  btn.setAttribute('aria-label', on ? '取消收藏' : '加入收藏');
+}
+
 function openSheet(p){
+  currentP = p;
   const ty = typeOf(p);
   document.getElementById('sheet-cat').textContent = p.category + ' · ' + ty.e + ' ' + ty.t;
   document.getElementById('sheet-name').textContent = p.name;
@@ -407,6 +477,8 @@ function openSheet(p){
     ? '📍 距離你約 ' + formatDist(haversine(userLatLng[0], userLatLng[1], p.lat, p.lng))
     : '';
   document.getElementById('sheet-note').textContent = p.note;
+  document.getElementById('sheet-memo').value = store.memos[placeKey(p)] || '';
+  renderFavBtn(p);
   document.getElementById('sheet-play').href = p.video;
   document.getElementById('sheet-nav').href = 'https://www.google.com/maps/search/?api=1&query=' + encodeURIComponent(p.addr);
   document.getElementById('sheet').classList.add('show');
@@ -414,14 +486,36 @@ function openSheet(p){
   statusEl.classList.add('hide');
 }
 function closeSheet(){
+  document.getElementById('sheet-memo').blur();
   document.getElementById('sheet').classList.remove('show');
   document.getElementById('sheet-scrim').classList.remove('show');
 }
 document.getElementById('sheet-scrim').addEventListener('click', closeSheet);
+
+document.getElementById('sheet-fav').addEventListener('click', () => {
+  const p = currentP;
+  if (!p) return;
+  const k = placeKey(p);
+  if (store.favs[k]) delete store.favs[k];
+  else store.favs[k] = true;
+  saveStore();
+  renderFavBtn(p);
+  p.marker.setIcon(makeIcon(typeOf(p).e, false, isFav(p)));
+  applyFilter();   // setIcon 會換新的 DOM，要重新套用篩選
+});
+
+/* 邊打邊存，不用按儲存 */
+document.getElementById('sheet-memo').addEventListener('input', e => {
+  if (!currentP) return;
+  const k = placeKey(currentP), v = e.target.value;
+  if (v.trim()) store.memos[k] = v;
+  else delete store.memos[k];
+  saveStore();
+});
 document.getElementById('sheet').querySelector('.grabber').addEventListener('click', closeSheet);
 
 function renderChips(){
-  const cats = ["全部", ...DATA.map(g => g.category)];
+  const cats = ["全部", FAV_CHIP, ...DATA.map(g => g.category)];
   chipsEl.innerHTML = cats.map(c =>
     `<div class="chip${c===activeCat?' active':''}" data-cat="${c}"><span class="dot"></span>${c}</div>`
   ).join('');
@@ -436,8 +530,9 @@ function renderChips(){
 
 function applyFilter(){
   Object.entries(markersByCat).forEach(([cat, markers]) => {
-    const show = activeCat === "全部" || activeCat === cat;
     markers.forEach(m => {
+      const show = activeCat === "全部" || activeCat === cat
+        || (activeCat === FAV_CHIP && isFav(m.point));
       const el = m.getElement();
       if (el) el.style.display = show ? '' : 'none';
     });
@@ -449,7 +544,9 @@ function render(){
   DATA.forEach(group => {
     markersByCat[group.category] = [];
     group.points.forEach(p => {
-      const marker = L.marker([p.lat, p.lng], { icon: makeIcon(typeOf(p).e, false) }).addTo(map);
+      const marker = L.marker([p.lat, p.lng], { icon: makeIcon(typeOf(p).e, false, isFav(p)) }).addTo(map);
+      marker.point = p;
+      p.marker = marker;
       marker.on('click', () => openSheet(p));
       markersByCat[group.category].push(marker);
       allBounds.push([p.lat, p.lng]);
