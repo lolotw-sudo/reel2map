@@ -184,8 +184,10 @@ body{
   font-size:17px; cursor:pointer;
   box-shadow:0 2px 8px rgba(31,42,68,0.3);
 }
-.locate-btn.active{background:var(--vermillion); border-color:var(--vermillion);}
-.locate-btn.loading{opacity:0.55;}
+.locate-btn svg{width:24px; height:24px; display:block;}
+.locate-btn.active{border-color:#3BA3E0;}
+.locate-btn.loading svg{animation:locate-pulse 0.9s ease-in-out infinite alternate;}
+@keyframes locate-pulse{from{opacity:1;} to{opacity:0.35;}}
 .me-dot{
   width:16px; height:16px; border-radius:50%;
   background:#2F6FE4; border:3px solid #fff;
@@ -534,6 +536,7 @@ function locateMe(){
         icon: L.divIcon({ className:'', html:'<div class="me-dot"></div>', iconSize:[16,16], iconAnchor:[8,8] }),
         zIndexOffset: 1000, interactive:false
       }).addTo(map);
+      map.flyTo(userLatLng, Math.max(map.getZoom(), 15), { duration:0.8 });   // 拉到所在位置
       statusEl.classList.remove('hide');
       statusEl.textContent = '📍 已定位，點圖釘看跟你的距離';
     },
@@ -553,7 +556,18 @@ const LocateControl = L.Control.extend({
   onAdd: function(){
     const btn = L.DomUtil.create('div', 'locate-btn');
     btn.id = 'locate-btn';
-    btn.textContent = '🧭';
+    btn.title = '移到我的位置';
+    btn.setAttribute('role', 'button');
+    btn.setAttribute('aria-label', '移到我的位置');
+    // 深藍地標＋淺藍準星
+    btn.innerHTML = `<svg viewBox="0 0 24 24" aria-hidden="true">
+      <g fill="none" stroke="#3BA3E0" stroke-width="1.7" stroke-linecap="round">
+        <path d="M8.2 14.6 A4.6 4.6 0 1 0 15.8 14.6"/>
+        <path d="M4.6 18h2.2 M17.2 18h2.2 M12 22.6v-1.6"/>
+      </g>
+      <path fill="#1F3A6B" d="M12 1.6a5.6 5.6 0 0 0-5.6 5.6c0 4.1 5.6 10.2 5.6 10.2s5.6-6.1 5.6-10.2A5.6 5.6 0 0 0 12 1.6z"/>
+      <circle cx="12" cy="7.2" r="2.1" fill="#fff"/>
+    </svg>`;
     L.DomEvent.disableClickPropagation(btn);
     L.DomEvent.on(btn, 'click', locateMe);
     return btn;
