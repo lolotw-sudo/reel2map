@@ -18,6 +18,7 @@ const NOTE_DATA_SHEET_ID = '1PZ3EsCNlXxmh4wL05wmchivjNAJTVS9bW0W3jD4TUkw';   // 
 function setMeta_(e) {
   const p = e.parameter;
   if (p.key !== NOTE_KEY) return noteText_('forbidden');
+  if (p.op === 'read') return readMeta_();
 
   const lock = LockService.getScriptLock();
   lock.waitLock(10000);
@@ -54,6 +55,21 @@ function setMeta_(e) {
   } finally {
     lock.releaseLock();
   }
+}
+
+// op=read：即時讀出有收藏或說明的列（發布的 CSV 會快取 5 分鐘，這個不會）
+function readMeta_() {
+  const data = SpreadsheetApp.openById(NOTE_DATA_SHEET_ID).getSheets()[0].getDataRange().getValues();
+  const header = data[0].map(h => String(h).trim());
+  const iName = header.indexOf('名稱'), iLat = header.indexOf('緯度'), iLng = header.indexOf('經度'),
+        iFav = header.indexOf('收藏'), iMemo = header.indexOf('我的說明');
+  const out = [];
+  for (let r = 1; r < data.length; r++) {
+    const fav = iFav >= 0 && String(data[r][iFav]).trim() !== '';
+    const memo = iMemo >= 0 ? String(data[r][iMemo]) : '';
+    if (fav || memo.trim()) out.push({ name: String(data[r][iName]).trim(), lat: data[r][iLat], lng: data[r][iLng], fav, memo });
+  }
+  return ContentService.createTextOutput(JSON.stringify(out)).setMimeType(ContentService.MimeType.JSON);
 }
 
 function noteText_(s) {

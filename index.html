@@ -326,6 +326,9 @@ function parseCSV(text){
   return rows.filter(r => r.some(v => v.trim() !== ''));
 }
 
+/* Apps Script 防公式注入會在 = + - @ 開頭的字前面加單引號，顯示時拿掉 */
+const cleanMemo = s => String(s || '').replace(/^'(?=[=+\-@])/, '');
+
 function rowsToData(rows){
   const header = rows[0].map(h => h.trim());
   const idx = name => header.indexOf(name);
@@ -350,7 +353,7 @@ function rowsToData(rows){
       category: cat,
       type: cell(iType),
       fav: cell(iFav) !== '',
-      memo: cell(iMemo).replace(/^'(?=[=+\-@])/, '')   // Apps Script 防公式注入加的單引號拿掉
+      memo: cleanMemo(cell(iMemo))
     });
   });
 
@@ -362,8 +365,10 @@ function rowsToData(rows){
 /* ============================================================
    收藏＋我的說明
    有設定 sync 的地圖：寫回試算表「收藏」「我的說明」兩欄，換手機也看得到。
+   讀取：先用發布的 CSV（Google 會快取 5 分鐘），載入後再透過 Apps Script
+   即時抓一次（pullMeta），切回這個分頁時也會再抓，所以別台裝置改的很快就看得到。
    本機 localStorage 只當暫存：
-   - 剛改過的（10 分鐘內）先以本機為準，因為發布的 CSV 要幾分鐘才會更新
+   - 剛改過的（10 分鐘內）先以本機為準，以防即時讀取失敗時被舊的 CSV 蓋掉
    - 沒送成功的（dirty）下次開網頁會自動補送
    沒設定 sync 的地圖（例如 Jun）就只存在本機。
    以「名稱＋座標」辨識地點，試算表改了店名或座標就會對不上
@@ -435,6 +440,48 @@ async function pushMeta(p){
   if (ok && now && now.t === sentAt){ now.dirty = false; saveStore(); }   // 送出後又改過就等下一輪
   if (currentP === p) syncEl().textContent = ok ? '✓ 已同步到試算表' : '⚠️ 未同步，下次開網頁會再試';
 }
+
+/* 即時讀取試算表裡的收藏／說明；15 秒內不重複抓 */
+let pulling = false, lastPull = 0;
+async function pullMeta(){
+  if (!SYNC || !DATA.length || pulling || Date.now() - lastPull < 15000) return;
+  pulling = true;
+  const startedAt = lastPull = Date.now();
+  try {
+    const qs = new URLSearchParams({ action:'setmeta', key:SYNC.key, op:'read', t:startedAt });
+    const list = JSON.parse(await (await fetch(SYNC.url + '?' + qs)).text());
+    if (Array.isArray(list)) applyLive(list, startedAt);
+  } catch (err) {   // 讀不到就維持 CSV 的資料
+  } finally { pulling = false; }
+}
+
+function applyLive(list, startedAt){
+  const byName = new Map();
+  list.forEach(x => { if (!byName.has(x.name)) byName.set(x.name, []); byName.get(x.name).push(x); });
+  DATA.flatMap(g => g.points).forEach(p => {
+    const hit = (byName.get(p.name) || []).find(x =>
+      Math.abs(parseFloat(x.lat) - p.lat) < 1e-4 && Math.abs(parseFloat(x.lng) - p.lng) < 1e-4);
+    let fav = !!(hit && hit.fav), memo = hit ? cleanMemo(hit.memo) : '';
+    const k = placeKey(p), e = store.edits[k];
+    if (e && (e.dirty || e.t >= startedAt)){   // 還沒送到、或讀取途中才改的，以本機為準
+      if ('fav' in e) fav = e.fav;
+      if ('memo' in e) memo = e.memo;
+    } else if (e) {
+      delete store.edits[k];   // 試算表已經即時反映，本機暫存可以丟
+    }
+    if (p.fav !== fav){ p.fav = fav; p.marker.setIcon(makeIcon(typeOf(p).e, false, fav)); }
+    if (p.memo !== memo){
+      p.memo = memo;
+      const memoEl = document.getElementById('sheet-memo');
+      if (currentP === p && document.activeElement !== memoEl) memoEl.value = memo;
+    }
+    if (currentP === p) renderFavBtn(p);
+  });
+  saveStore();
+  applyFilter();   // setIcon 會換新的 DOM，要重新套用篩選
+}
+document.addEventListener('visibilitychange', () => { if (!document.hidden) pullMeta(); });
+window.addEventListener('focus', pullMeta);
 
 /* ============================================================
    渲染層
@@ -645,6 +692,7 @@ async function load(){
     const rows = parseCSV(await res.text());
     DATA = rows.length < 2 ? [] : rowsToData(rows);   // 只有標題列＝還沒有地點，照樣顯示空地圖
     render();
+    pullMeta();
   } catch (err) {
     statusEl.innerHTML = '讀不到地點資料，可能是網路不通或試算表尚未發布。<br><button class="retry">再試一次</button>';
     statusEl.querySelector('.retry').addEventListener('click', load);
