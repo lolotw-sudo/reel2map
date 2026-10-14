@@ -8,19 +8,21 @@
       （不要按「新增部署作業」，會換網址）
 
    NOTE_KEY 會寫在公開的 index.html 裡，所以它只能改這兩欄，
-   不能新增/刪除地點；原本的 SECRET 不需要也不應該放進網頁。
+   不能新增/刪除地點；原本的密語不需要也不應該放進網頁。
+   這個檔案不依賴 Code.gs 裡的任何常數或函式，名稱也都加了 NOTE_ 前綴避免撞名。
    ============================================================ */
 
 const NOTE_KEY = 'r2m-note-7Kq3vX9p';
+const NOTE_DATA_SHEET_ID = '1PZ3EsCNlXxmh4wL05wmchivjNAJTVS9bW0W3jD4TUkw';   // reel2map_地點資料
 
 function setMeta_(e) {
   const p = e.parameter;
-  if (p.key !== NOTE_KEY && p.token !== SECRET) return text_('forbidden');
+  if (p.key !== NOTE_KEY) return noteText_('forbidden');
 
   const lock = LockService.getScriptLock();
   lock.waitLock(10000);
   try {
-    const sheet = SpreadsheetApp.openById(DATA_SPREADSHEET_ID).getSheets()[0];
+    const sheet = SpreadsheetApp.openById(NOTE_DATA_SHEET_ID).getSheets()[0];
     const data = sheet.getDataRange().getValues();
     const header = data[0].map(h => String(h).trim());
     const iName = header.indexOf('名稱'), iLat = header.indexOf('緯度'), iLng = header.indexOf('經度');
@@ -34,7 +36,7 @@ function setMeta_(e) {
           Math.abs(parseFloat(data[r][iLat]) - lat) < 1e-4 &&
           Math.abs(parseFloat(data[r][iLng]) - lng) < 1e-4) { row = r + 1; break; }
     }
-    if (row < 0) return text_('not found');
+    if (row < 0) return noteText_('not found');
 
     // 欄位不存在就在最右邊自動補上標題
     const col = title => {
@@ -46,14 +48,20 @@ function setMeta_(e) {
     if ('memo' in p) {
       const cell = sheet.getRange(row, col('我的說明'));
       cell.setNumberFormat('@');   // 純文字，避免「3/5」被轉成日期
-      cell.setValue(sanitize_(p.memo));
+      cell.setValue(noteSanitize_(p.memo));
     }
-    return text_('ok');
+    return noteText_('ok');
   } finally {
     lock.releaseLock();
   }
 }
 
-function text_(s) {
+function noteText_(s) {
   return ContentService.createTextOutput(s);
+}
+
+// 開頭是 = + - @ 的字串前面加單引號，避免被當成公式
+function noteSanitize_(v) {
+  v = String(v || '');
+  return /^[=+\-@]/.test(v) ? "'" + v : v;
 }
