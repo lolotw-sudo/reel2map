@@ -13,17 +13,27 @@
    ============================================================ */
 
 const NOTE_KEY = 'r2m-note-7Kq3vX9p';
-const NOTE_DATA_SHEET_ID = '1PZ3EsCNlXxmh4wL05wmchivjNAJTVS9bW0W3jD4TUkw';   // reel2map_地點資料
+// 每張地圖對應的試算表與分頁（gid = 網頁讀的那個發布分頁）；網頁用 who=jun 指定，沒帶就是 lolo
+const NOTE_SHEETS = {
+  lolo: { id: '1PZ3EsCNlXxmh4wL05wmchivjNAJTVS9bW0W3jD4TUkw', gid: 46533551 },     // reel2map_地點資料
+  jun:  { id: '156cfCE8yQ5xQJSX5i6g8bJRxCmARRWFFc4WO0tELvH4', gid: 1634312988 },   // reel2map_Jun
+};
+
+function noteSheet_(who) {
+  const cfg = NOTE_SHEETS.hasOwnProperty(who) ? NOTE_SHEETS[who] : NOTE_SHEETS.lolo;
+  const ss = SpreadsheetApp.openById(cfg.id);
+  return ss.getSheets().find(s => s.getSheetId() === cfg.gid) || ss.getSheets()[0];
+}
 
 function setMeta_(e) {
   const p = e.parameter;
   if (p.key !== NOTE_KEY) return noteText_('forbidden');
-  if (p.op === 'read') return readMeta_();
+  if (p.op === 'read') return readMeta_(p.who);
 
   const lock = LockService.getScriptLock();
   lock.waitLock(10000);
   try {
-    const sheet = SpreadsheetApp.openById(NOTE_DATA_SHEET_ID).getSheets()[0];
+    const sheet = noteSheet_(p.who);
     const data = sheet.getDataRange().getValues();
     const header = data[0].map(h => String(h).trim());
     const iName = header.indexOf('名稱'), iLat = header.indexOf('緯度'), iLng = header.indexOf('經度');
@@ -58,8 +68,8 @@ function setMeta_(e) {
 }
 
 // op=read：即時讀出有收藏或說明的列（發布的 CSV 會快取 5 分鐘，這個不會）
-function readMeta_() {
-  const data = SpreadsheetApp.openById(NOTE_DATA_SHEET_ID).getSheets()[0].getDataRange().getValues();
+function readMeta_(who) {
+  const data = noteSheet_(who).getDataRange().getValues();
   const header = data[0].map(h => String(h).trim());
   const iName = header.indexOf('名稱'), iLat = header.indexOf('緯度'), iLng = header.indexOf('經度'),
         iFav = header.indexOf('收藏'), iMemo = header.indexOf('我的說明');

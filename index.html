@@ -260,13 +260,13 @@ body{
 
 /* 每個人一張地圖：網址加 ?who=jun 就讀 Jun 的試算表；沒帶就是 LOLO 的
    sync：收藏／我的說明要寫回試算表的 Apps Script 端點。沒設定的地圖只存在本機 */
-const SYNC_LOLO = {
+const SYNC_ENDPOINT = {
   url: 'https://script.google.com/macros/s/AKfycbyKrqu3H5vKUM8tR0Nv6Da9pBHW6hMff_zQt1C0eEcTDG4Fnt6KRUlR1wIWEtctzXIo/exec',
   key: 'r2m-note-7Kq3vX9p'   // 只能改收藏／我的說明兩欄的公開金鑰（見 apps-script/setmeta.gs）
 };
 const MAPS = {
-  lolo: { title:'臉書美食地圖', center:[33.60, 130.45], csv:'https://docs.google.com/spreadsheets/d/e/2PACX-1vQi4beiBychHbMEZRHcu1Sd0_n77o6UXQ1_s81carfdzJD-fwGYO9wmJXXQr55s-k1kfn4v5m5XywP6/pub?gid=46533551&single=true&output=csv', sync:SYNC_LOLO },
-  jun:  { title:'Jun 的美食地圖', center:[35.68, 139.76], csv:'https://docs.google.com/spreadsheets/d/e/2PACX-1vShOS6TPKiaDpSfbLNEkp_hMPCKtnQpD_omiN0kljbXAs4iGjmK-CB9r9p5yi-1ThxZ2EkRnKSm2pRq/pub?gid=1634312988&single=true&output=csv' },
+  lolo: { title:'臉書美食地圖', center:[33.60, 130.45], csv:'https://docs.google.com/spreadsheets/d/e/2PACX-1vQi4beiBychHbMEZRHcu1Sd0_n77o6UXQ1_s81carfdzJD-fwGYO9wmJXXQr55s-k1kfn4v5m5XywP6/pub?gid=46533551&single=true&output=csv', sync:SYNC_ENDPOINT },
+  jun:  { title:'Jun 的美食地圖', center:[35.68, 139.76], csv:'https://docs.google.com/spreadsheets/d/e/2PACX-1vShOS6TPKiaDpSfbLNEkp_hMPCKtnQpD_omiN0kljbXAs4iGjmK-CB9r9p5yi-1ThxZ2EkRnKSm2pRq/pub?gid=1634312988&single=true&output=csv', sync:{ ...SYNC_ENDPOINT, who:'jun' } },
 };
 const WHO = new URLSearchParams(location.search).get('who');
 const ME = MAPS.hasOwnProperty(WHO) ? MAPS[WHO] : MAPS.lolo;
@@ -372,7 +372,7 @@ function rowsToData(rows){
    本機 localStorage 只當暫存：
    - 剛改過的（10 分鐘內）先以本機為準，以防即時讀取失敗時被舊的 CSV 蓋掉
    - 沒送成功的（dirty）下次開網頁會自動補送
-   沒設定 sync 的地圖（例如 Jun）就只存在本機。
+   沒設定 sync 的地圖就只存在本機；從只存本機改成同步時，本機資料會補送上去。
    以「名稱＋座標」辨識地點，試算表改了店名或座標就會對不上
    ============================================================ */
 
@@ -399,6 +399,11 @@ function mergeLocal(points){
   // 舊版只存本機的收藏／說明：試算表那格還空著才補上去
   const legacy = { favs: store.favs || {}, memos: store.memos || {} };
   delete store.favs; delete store.memos;
+  // 這張地圖剛開始同步：之前只存在本機的修改全部補送一次
+  if (SYNC && !store.synced){
+    Object.values(store.edits).forEach(e => { e.dirty = true; });
+    store.synced = true;
+  }
 
   const now = Date.now();
   points.forEach(p => {
@@ -429,6 +434,7 @@ async function pushMeta(p){
   const k = placeKey(p), e = store.edits[k];
   if (!SYNC || !e) return;
   const body = new URLSearchParams({ action:'setmeta', key:SYNC.key, name:p.name, lat:p.lat, lng:p.lng });
+  if (SYNC.who) body.set('who', SYNC.who);
   if ('fav' in e) body.set('fav', e.fav ? '1' : '0');
   if ('memo' in e) body.set('memo', e.memo);
   const sentAt = e.t;
@@ -439,7 +445,7 @@ async function pushMeta(p){
     ok = (await res.text()).trim() === 'ok';
   } catch (err) {}
   const now = store.edits[k];
-  if (ok && now && now.t === sentAt){ now.dirty = false; saveStore(); }   // 送出後又改過就等下一輪
+  if (ok && now && now.t === sentAt){ now.dirty = false; now.syncedAt = Date.now(); saveStore(); }   // 送出後又改過就等下一輪
   if (currentP === p) syncEl().textContent = ok ? '✓ 已同步到試算表' : '⚠️ 未同步，下次開網頁會再試';
 }
 
@@ -451,6 +457,7 @@ async function pullMeta(){
   const startedAt = lastPull = Date.now();
   try {
     const qs = new URLSearchParams({ action:'setmeta', key:SYNC.key, op:'read', t:startedAt });
+    if (SYNC.who) qs.set('who', SYNC.who);
     const list = JSON.parse(await (await fetch(SYNC.url + '?' + qs)).text());
     if (Array.isArray(list)) applyLive(list, startedAt);
   } catch (err) {   // 讀不到就維持 CSV 的資料
@@ -465,7 +472,8 @@ function applyLive(list, startedAt){
       Math.abs(parseFloat(x.lat) - p.lat) < 1e-4 && Math.abs(parseFloat(x.lng) - p.lng) < 1e-4);
     let fav = !!(hit && hit.fav), memo = hit ? cleanMemo(hit.memo) : '';
     const k = placeKey(p), e = store.edits[k];
-    if (e && (e.dirty || e.t >= startedAt)){   // 還沒送到、或讀取途中才改的，以本機為準
+    // 還沒送到、讀取途中才改的、或讀取途中才送到的（讀到的可能是舊值），以本機為準
+    if (e && (e.dirty || e.t >= startedAt || (e.syncedAt || 0) >= startedAt)){
       if ('fav' in e) fav = e.fav;
       if ('memo' in e) memo = e.memo;
     } else if (e) {
